@@ -1,0 +1,44 @@
+[Unit]
+Description=Gesture Bridge broker
+Documentation=https://github.com/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=gesturebridge
+Group=gesturebridge
+WorkingDirectory=/opt/gesture-bridge
+
+# Токен лежит отдельным файлом с правами 0600, а не здесь: юнит читают все.
+EnvironmentFile=/etc/gesture-bridge.env
+
+# Файлы посылок надо куда-то складывать, а ProtectSystem=strict ниже делает
+# диск доступным только для чтения. StateDirectory — та самая дырка, которую
+# systemd прорезает сам: создаёт /var/lib/gesture-bridge, выставляет владельца
+# и разрешает туда писать. Код проекта в /opt при этом остаётся неизменяемым,
+# что и правильно: изменяемому состоянию там не место.
+StateDirectory=gesture-bridge
+StateDirectoryMode=0700
+
+# Слушаем только localhost. Наружу выставляет tailscale serve, так что
+# брокер недоступен из интернета вообще — ни порта, ни фаервольных правил.
+ExecStart=/opt/gesture-bridge/.venv/bin/python broker/server.py --host 127.0.0.1 --port 8787 --spool /var/lib/gesture-bridge/spool
+
+Restart=on-failure
+RestartSec=3s
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+LockPersonality=true
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,8 @@
+.token
+.venv/
+libs/
+spool/
+__pycache__/
+*.pyc
+models/*.task
+.idea/

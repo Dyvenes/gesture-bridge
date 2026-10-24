@@ -1,0 +1,12 @@
+# Проект разложен на две платформы, поэтому переводы строк фиксируем явно.
+* text=auto eol=lf
+
+# PowerShell живёт только на Windows, и ему привычнее CRLF.
+*.ps1 text eol=crlf
+
+# Юнит systemd читается на Linux: CRLF здесь способен сломать разбор.
+*.service text eol=lf
+
+# Бинарное не трогать.
+*.png binary
+*.task binary

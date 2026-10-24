@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#16181d">
+  <title>Gesture Bridge</title>
+  <link rel="manifest" href="/static/manifest.json">
+  <link rel="icon" href="/static/icons/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <div class="dot" id="link-dot" aria-hidden="true"></div>
+    <div class="head-text">
+      <h1>Gesture Bridge</h1>
+      <p id="link-state">подключаюсь…</p>
+    </div>
+    <button id="stand-toggle" class="ghost" type="button"
+            aria-pressed="false" title="Камера работает постоянно">стенд</button>
+  </header>
+
+  <!-- Главный экран: что происходит прямо сейчас -->
+  <section id="stage" class="stage">
+    <div id="stage-icon" class="stage-icon">⌛</div>
+    <h2 id="stage-title">Ожидание</h2>
+    <p id="stage-text">Камера выключена. Поднимется, когда для этого
+       устройства появится посылка.</p>
+    <div id="countdown" class="countdown" hidden><span id="countdown-bar"></span></div>
+  </section>
+
+  <!-- Камера. Видео нужно браузеру для распознавания, человеку — для прицела -->
+  <section id="camera-wrap" class="camera-wrap" hidden>
+    <video id="video" playsinline muted autoplay></video>
+    <!-- Строка отладки: без неё непонятно, молчит камера, распознаватель
+         или порог. Видно, что модель думает про текущий кадр. -->
+    <div class="camera-debug" id="camera-debug">—</div>
+    <div class="camera-hint" id="camera-hint">покажи раскрытую ладонь</div>
+  </section>
+
+  <!-- Доставленное. Кнопки нужны потому, что браузер не даёт ни открыть
+       вкладку, ни писать в буфер без явного касания — жест рукой для него
+       касанием не считается. -->
+  <section id="delivered" class="card accent" hidden>
+    <h3 id="delivered-title">Принято</h3>
+    <p id="delivered-preview"></p>
+    <pre id="delivered-text" hidden></pre>
+    <ul id="delivered-files" class="queue" hidden></ul>
+    <a id="delivered-link" class="button" href="#" target="_blank"
+       rel="noopener" hidden>Открыть</a>
+    <button id="delivered-copy" class="button" type="button" hidden>
+      Скопировать
+    </button>
+  </section>
+
+  <!-- Висящая очередь: то, что не забрали ладонью -->
+  <section id="queue-wrap" hidden>
+    <h3 class="section-title">Висит в очереди</h3>
+    <ul id="queue" class="queue"></ul>
+  </section>
+
+  <section class="card muted">
+    <h3>Как отправить с телефона</h3>
+    <p>Открой «Поделиться» в любом приложении и выбери
+       <b>Gesture Bridge</b>. Потом покажи ладонь в веб-камеру ПК.</p>
+    <p class="hint">Пункт появится после установки на домашний экран:
+       меню браузера → «Установить приложение».</p>
+  </section>
+
+  <footer id="peers">устройства: —</footer>
+
+  <script type="module" src="/static/app.js"></script>
+</body>
+</html>
