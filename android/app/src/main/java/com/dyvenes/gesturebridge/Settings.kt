@@ -20,6 +20,11 @@ class Settings(context: Context) {
         get() = prefs.getString("name", null) ?: (Build.MODEL ?: "Телефон")
         set(value) = prefs.edit().putString("name", value.trim()).apply()
 
+    /** Поднимать ли сервис после перезагрузки телефона. */
+    var autoStart: Boolean
+        get() = prefs.getBoolean("autoStart", true)
+        set(value) = prefs.edit().putBoolean("autoStart", value).apply()
+
     val configured: Boolean
         get() = broker.isNotEmpty() && token.isNotEmpty()
 }

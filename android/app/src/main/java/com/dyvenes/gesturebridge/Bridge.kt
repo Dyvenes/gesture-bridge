@@ -1,11 +1,17 @@
 package com.dyvenes.gesturebridge
 
+import java.util.concurrent.ConcurrentHashMap
+
 /**
  * Общее состояние сервиса и экрана.
  *
  * Сервис и activity живут в одном процессе, поэтому обычный объект проще
  * и честнее, чем широковещательные сообщения: никакой сериализации и
  * никаких гонок при пересоздании экрана.
+ *
+ * Слушателей именно несколько, а не один. Сначала слот был один — и
+ * сервис, стартовав после экрана, молча его перезаписывал: уведомление
+ * обновлялось, а экран застывал на старом состоянии.
  */
 object Bridge {
 
@@ -19,13 +25,18 @@ object Bridge {
     var peers: String = ""
 
     private val lines = ArrayDeque<String>()
-
-    /** Экран подписывается сюда, чтобы перерисоваться. */
-    @Volatile
-    var listener: (() -> Unit)? = null
+    private val listeners = ConcurrentHashMap<String, () -> Unit>()
 
     val log: String
         get() = synchronized(lines) { lines.joinToString("\n") }
+
+    fun listen(key: String, callback: () -> Unit) {
+        listeners[key] = callback
+    }
+
+    fun unlisten(key: String) {
+        listeners.remove(key)
+    }
 
     fun setState(value: String) {
         state = value
@@ -41,6 +52,6 @@ object Bridge {
     }
 
     private fun notifyChanged() {
-        listener?.invoke()
+        listeners.values.forEach { callback -> runCatching { callback() } }
     }
 }

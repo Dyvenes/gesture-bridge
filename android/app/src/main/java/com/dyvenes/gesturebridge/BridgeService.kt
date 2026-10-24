@@ -4,34 +4,41 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
-import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
-import android.os.IBinder
+import android.os.Handler
+import android.os.Looper
 import androidx.core.app.NotificationCompat
+import androidx.lifecycle.LifecycleService
+import okhttp3.OkHttpClient
 import org.json.JSONObject
 
 /**
- * Держит связь с брокером, пока приложение не на экране.
+ * Держит связь с брокером и поднимает камеру, когда для нас есть посылка.
  *
  * Выбран foreground-сервис, а не пуши: он ничего не отдаёт наружу и не
  * тянет в проект зависимость от Google. Цена — постоянная строка в
  * шторке, и это осознанный размен в пользу того, что данные остаются
  * внутри своей сети.
+ *
+ * LifecycleService нужен ради CameraX: ему требуется владелец жизненного
+ * цикла, а запускать ради этого activity из фона Android не позволяет.
  */
-class BridgeService : Service() {
+class BridgeService : LifecycleService() {
 
     companion object {
         const val ACTION_SHARE = "com.dyvenes.gesturebridge.SHARE"
+        const val ACTION_STOP = "com.dyvenes.gesturebridge.STOP"
         const val EXTRA_TEXT = "text"
 
         private const val CHANNEL_ID = "bridge-link"
         private const val NOTIFICATION_ID = 1
+        private const val CAMERA_WINDOW_MS = 16_000L
 
         fun start(context: Context) {
-            val intent = Intent(context, BridgeService::class.java)
-            context.startForegroundService(intent)
+            context.startForegroundService(Intent(context, BridgeService::class.java))
         }
 
         fun stop(context: Context) {
@@ -49,6 +56,12 @@ class BridgeService : Service() {
     private lateinit var settings: Settings
     private lateinit var client: BridgeClient
 
+    private val http = OkHttpClient()
+    private val main = Handler(Looper.getMainLooper())
+
+    private var camera: CameraEngine? = null
+    private var stopCameraAt: Runnable? = null
+
     override fun onCreate() {
         super.onCreate()
         settings = Settings(this)
@@ -57,24 +70,87 @@ class BridgeService : Service() {
         createChannel()
         startForeground(NOTIFICATION_ID, buildNotification())
 
-        Bridge.listener = { refreshNotification() }
+        Bridge.listen("service") { refreshNotification() }
         client.start()
+
+        // Модель качаем заранее, чтобы первый же жест не ждал сети.
+        Thread { ModelStore.ensure(this, settings, http) }.start()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_SHARE) {
-            intent.getStringExtra(EXTRA_TEXT)?.let(::sendShare)
+        super.onStartCommand(intent, flags, startId)
+        when (intent?.action) {
+            ACTION_SHARE -> intent.getStringExtra(EXTRA_TEXT)?.let(::sendShare)
+
+            // Остановка по кнопке в шторке. Автозапуск при этом выключаем:
+            // иначе сервис вернётся после перезагрузки, хотя его просили уйти.
+            ACTION_STOP -> {
+                settings.autoStart = false
+                Bridge.note("остановлен по кнопке")
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
+                return START_NOT_STICKY
+            }
         }
         return START_STICKY
     }
 
     override fun onDestroy() {
-        Bridge.listener = null
+        Bridge.unlisten("service")
+        cancelCameraTimeout()
+        camera?.shutdown()
+        camera = null
         client.stop()
         super.onDestroy()
     }
 
-    override fun onBind(intent: Intent?): IBinder? = null
+    // --- камера ---------------------------------------------------------
+
+    private fun hasCameraPermission(): Boolean =
+        checkSelfPermission(android.Manifest.permission.CAMERA) ==
+                PackageManager.PERMISSION_GRANTED
+
+    private fun wakeCamera(ttlSeconds: Int) {
+        if (!hasCameraPermission()) {
+            Bridge.note("нет разрешения на камеру — открой приложение")
+            return
+        }
+        val model = ModelStore.file(this)
+        if (!ModelStore.ready(this)) {
+            Bridge.note("модель ещё не скачана")
+            Thread { ModelStore.ensure(this, settings, http) }.start()
+            return
+        }
+
+        val engine = camera ?: CameraEngine(this, this, model, ::onPalm).also { camera = it }
+        engine.start()
+
+        cancelCameraTimeout()
+        val window = if (ttlSeconds > 0) ttlSeconds * 1000L + 1000L else CAMERA_WINDOW_MS
+        stopCameraAt = Runnable { sleepCamera() }.also { main.postDelayed(it, window) }
+    }
+
+    private fun sleepCamera() {
+        cancelCameraTimeout()
+        camera?.stop()
+        refreshNotification()
+    }
+
+    private fun cancelCameraTimeout() {
+        stopCameraAt?.let(main::removeCallbacks)
+        stopCameraAt = null
+    }
+
+    /** Ладонь удержана: идём на аукцион, а не забираем посылку сами. */
+    private fun onPalm(confidence: Float, handArea: Float) {
+        val signals = JSONObject()
+            .put("hand", handArea.toDouble())
+            .put("conf", confidence.toDouble())
+            .put("idle", 0)
+
+        client.send(JSONObject().put("t", "bid").put("role", "drop").put("signals", signals))
+        Bridge.note("ладонь принята, жду брокера")
+    }
 
     // --- отправка -------------------------------------------------------
 
@@ -100,40 +176,57 @@ class BridgeService : Service() {
         }
 
         client.send(message)
-        Bridge.note("отправлено: ${message.getString("preview")}")
+        Bridge.note("отправлено: " + message.getString("preview"))
     }
 
     // --- приём ----------------------------------------------------------
 
+    private fun names(message: JSONObject): String {
+        val peers = message.optJSONArray("peers") ?: return ""
+        return (0 until peers.length())
+            .mapNotNull { peers.optJSONObject(it)?.optString("name") }
+            .joinToString(", ")
+    }
+
     private fun handle(message: JSONObject) {
         when (message.optString("t")) {
-            "welcome" -> {
-                val peers = message.optJSONArray("peers")
-                val names = buildList {
-                    for (i in 0 until (peers?.length() ?: 0)) {
-                        add(peers!!.getJSONObject(i).optString("name"))
-                    }
-                }
-                Bridge.peers = names.joinToString(", ")
-                Bridge.note("на связи: ${Bridge.peers}")
+            "welcome", "peers" -> {
+                Bridge.peers = names(message)
+                Bridge.note("устройства: " + Bridge.peers)
             }
 
-            "peers" -> {
-                val peers = message.optJSONArray("peers")
-                val names = buildList {
-                    for (i in 0 until (peers?.length() ?: 0)) {
-                        add(peers!!.getJSONObject(i).optString("name"))
-                    }
-                }
-                Bridge.peers = names.joinToString(", ")
-                Bridge.note("устройства: ${Bridge.peers}")
+            "grabbed" -> Bridge.note("захвачено: " + message.optString("preview"))
+
+            "pending" -> {
+                Bridge.note("для нас посылка: " + message.optString("preview"))
+                wakeCamera(message.optInt("ttl", 15))
             }
 
-            "grabbed" -> Bridge.note("захвачено: ${message.optString("preview")}")
-            "pending" -> Bridge.note("для нас посылка: ${message.optString("preview")}")
-            "deliver" -> Bridge.note("доставлено: ${message.optString("preview")}")
-            "hovering" -> Bridge.note("посылка висит в очереди")
-            "error" -> Bridge.note("брокер: ${message.optString("reason")}")
+            "deliver" -> {
+                sleepCamera()
+                Bridge.note("принято: " + message.optString("preview"))
+                Delivery.handle(this, settings, http, message)
+            }
+
+            "taken" -> {
+                sleepCamera()
+                Bridge.note("забрало другое устройство: " + message.optString("by"))
+            }
+
+            "lost" -> Bridge.note("жест отдан: " + message.optString("to"))
+            "ignored" -> Bridge.note("жест смазался, покажи ещё раз")
+
+            "nothing_to_take" -> {
+                sleepCamera()
+                Bridge.note("брать нечего")
+            }
+
+            "hovering" -> {
+                sleepCamera()
+                Bridge.note("посылка висит в очереди")
+            }
+
+            "error" -> Bridge.note("брокер: " + message.optString("reason"))
         }
     }
 
@@ -158,20 +251,29 @@ class BridgeService : Service() {
             Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE,
         )
+        val stop = PendingIntent.getService(
+            this,
+            1,
+            Intent(this, BridgeService::class.java).setAction(ACTION_STOP),
+            PendingIntent.FLAG_IMMUTABLE,
+        )
+
+        val text = if (camera?.running == true) "Покажи раскрытую ладонь" else Bridge.state
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(getString(R.string.app_name))
-            .setContentText(Bridge.state)
+            .setContentText(text)
             .setSmallIcon(android.R.drawable.stat_sys_upload)
             .setOngoing(true)
             .setSilent(true)
             .setContentIntent(open)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Остановить", stop)
             .build()
     }
 
     private fun refreshNotification() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
-            android.content.pm.PackageManager.PERMISSION_GRANTED
+            PackageManager.PERMISSION_GRANTED
         ) return
 
         getSystemService(NotificationManager::class.java)

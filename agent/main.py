@@ -35,6 +35,7 @@ import uiautomation as auto                                       # noqa: E402
 from agent.capture import GrabWatcher, set_clipboard_text         # noqa: E402
 from agent.gestures import FIST, PALM, GestureEvent, GestureWatcher  # noqa: E402
 from agent.overlay import ACCENT, WARN, Card, Overlay             # noqa: E402
+from agent.tray import Tray                                       # noqa: E402
 from agent.winutil import (                                       # noqa: E402
     downloads_dir, idle_seconds, open_url, reveal_in_explorer, unique_path,
 )
@@ -75,11 +76,47 @@ class Agent:
         # но отвечать на каждый такой «жест» отказом — лишний шум в оверлее.
         self.palm_quiet_until = 0.0
 
+        self.paused = False
+        self.tray = Tray(
+            on_toggle_pause=self._toggle_pause,
+            on_quit=self._quit,
+            status=self._status_text,
+        )
+
     # --- из потока камеры -------------------------------------------------
 
     def _on_gesture(self, event: GestureEvent) -> None:
+        if self.paused:
+            log.debug("жест пропущен: приостановлено из трея")
+            return
         self.loop.call_soon_threadsafe(
             lambda: self.loop.create_task(self._bid(event)))
+
+    # --- управление из трея ----------------------------------------------
+
+    def _status_text(self) -> str:
+        if self.ws is None or self.ws.closed:
+            return "нет связи с брокером"
+        if self.paused:
+            return "на связи, жесты приостановлены"
+        if self.stack:
+            return f"в воздухе посылок: {len(self.stack)}"
+        return "на связи"
+
+    def _toggle_pause(self) -> bool:
+        self.paused = not self.paused
+        log.info("жесты %s", "приостановлены" if self.paused else "возобновлены")
+        self.overlay.show(Card(
+            title="Жесты приостановлены" if self.paused else "Жесты снова ловятся",
+            hint="переключается из значка в трее",
+            accent=WARN if self.paused else ACCENT, ttl=3))
+        return self.paused
+
+    def _quit(self) -> None:
+        log.info("выход по команде из трея")
+        self.gestures.stop()
+        self.content.stop()
+        self.overlay.stop()
 
     # --- сеть -------------------------------------------------------------
 
@@ -298,6 +335,8 @@ class Agent:
     async def _handle(self, msg: dict) -> None:
         kind = msg.get("t")
 
+        self.tray.refresh()
+
         if kind == "welcome":
             self.stack = list(msg.get("stack") or [])
             peers = [p["name"] for p in msg.get("peers") or []]
@@ -410,7 +449,9 @@ class Agent:
         threading.Thread(target=self.gestures.run, daemon=True,
                          name="camera").start()
 
-        log.info("агент «%s» запущен; Ctrl+C для выхода", self.name)
+        self.tray.start()
+
+        log.info("агент «%s» запущен; управление — значок в трее", self.name)
         try:
             self.overlay.run()           # блокирует главный поток
         except KeyboardInterrupt:
@@ -418,6 +459,7 @@ class Agent:
         finally:
             self.gestures.stop()
             self.content.stop()
+            self.tray.stop()
 
 
 def load_token(explicit: str | None) -> str:

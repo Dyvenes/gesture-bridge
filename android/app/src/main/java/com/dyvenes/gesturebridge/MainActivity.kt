@@ -21,9 +21,18 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private lateinit var settings: Settings
 
-    private val askNotifications =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            if (!granted) {
+    // Камеру просим здесь, с видимого экрана: сервис из фона запросить
+    // разрешение не может, а без него поднять камеру нечем.
+    private val askPermissions =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
+            if (granted[Manifest.permission.CAMERA] == false) {
+                Toast.makeText(
+                    this,
+                    "Без камеры приём ладонью работать не будет",
+                    Toast.LENGTH_LONG,
+                ).show()
+            }
+            if (granted[Manifest.permission.POST_NOTIFICATIONS] == false) {
                 Toast.makeText(
                     this,
                     "Без уведомления сервис может быть остановлен системой",
@@ -48,8 +57,11 @@ class MainActivity : AppCompatActivity() {
             Bridge.setState("отключено")
         }
 
-        requestNotificationPermission()
+        requestPermissions()
         handleShare(intent)
+
+        // Устройство уже привязано — поднимаем связь молча, без нажатий.
+        if (settings.configured && settings.autoStart) BridgeService.start(this)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -60,13 +72,12 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        Bridge.listener = { runOnUiThread(::render) }
+        Bridge.listen("ui") { runOnUiThread(::render) }
         render()
     }
 
     override fun onPause() {
-        // Слушателя забирает сервис: ему он нужен для текста уведомления.
-        Bridge.listener = null
+        Bridge.unlisten("ui")
         super.onPause()
     }
 
@@ -91,6 +102,9 @@ class MainActivity : AppCompatActivity() {
         settings.broker = broker
         settings.token = token
         settings.deviceName = binding.deviceName.text.toString().ifBlank { Build.MODEL ?: "Телефон" }
+        // Кнопка «Подключиться» заодно возвращает автозапуск: её нажимают
+        // именно тогда, когда хотят, чтобы связь жила дальше сама.
+        settings.autoStart = true
 
         BridgeService.start(this)
         Bridge.note("настройки сохранены")
@@ -110,11 +124,17 @@ class MainActivity : AppCompatActivity() {
         if (!isTaskRoot) finish()
     }
 
-    private fun requestNotificationPermission() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
-        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
-            PackageManager.PERMISSION_GRANTED
-        ) return
-        askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+    private fun requestPermissions() {
+        val wanted = buildList {
+            if (checkSelfPermission(Manifest.permission.CAMERA) !=
+                PackageManager.PERMISSION_GRANTED
+            ) add(Manifest.permission.CAMERA)
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
+                PackageManager.PERMISSION_GRANTED
+            ) add(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        if (wanted.isNotEmpty()) askPermissions.launch(wanted.toTypedArray())
     }
 }

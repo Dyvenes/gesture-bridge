@@ -42,4 +42,14 @@ dependencies {
     // OkHttp ради WebSocket: он же умеет и скачивание файлов.
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+
+    // CameraX и lifecycle-service держим на версиях, совместимых с
+    // compileSdk 34: более свежие требуют 35+, а платформы 35 в SDK нет.
+    implementation("androidx.camera:camera-core:1.3.4")
+    implementation("androidx.camera:camera-camera2:1.3.4")
+    implementation("androidx.camera:camera-lifecycle:1.3.4")
+    implementation("androidx.lifecycle:lifecycle-service:2.8.7")
+
+    // Распознавание жестов — та же модель, что у агента на ПК.
+    implementation("com.google.mediapipe:tasks-vision:0.10.35")
 }
