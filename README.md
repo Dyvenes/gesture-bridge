@@ -595,3 +595,37 @@ models/          gesture_recognizer.task (скачивается отдельн�
 4. **Хоткей как дубль жеста** — на случай, когда махать рукой неудобно.
 5. **Скриншот активного окна** как последний резерв: работает даже там,
    где приложение не отдаёт ничего.
+
+---
+
+## Лицензия
+
+MIT — см. [LICENSE](LICENSE).
+
+---
+
+## In English
+
+**Gesture Bridge** moves content between your devices with a hand gesture.
+Make a fist at one device to grab, show an open palm at another to drop.
+Links, files, selected text and clipboard images.
+
+Three parts: a **broker** (Python/aiohttp, runs on a server — WebSocket,
+gesture auction, parcel queue, file store), a **Windows agent** (webcam
+gesture recognition via MediaPipe, content capture from Explorer, the
+clipboard and UI Automation, an always-on-top overlay), and a **PWA
+receiver** for Android (front-camera palm detection, Web Share Target).
+
+Transport and TLS run over Tailscale, so the broker never faces the public
+internet and the browser still gets a valid certificate — which it needs,
+since camera access requires HTTPS.
+
+Notable design points: the phone's camera only wakes when a parcel is
+waiting; a gesture is a *bid* arbitrated by the broker rather than a
+command, so only one device wins when several cameras see the same hand;
+grabbing is two-phase, so only the winner captures content; the sender is
+excluded from receiving its own parcel; and gesture hold uses hysteresis,
+because model confidence fluctuates and a single dropped frame would
+otherwise reset the timer.
+
+Documentation is in Russian.

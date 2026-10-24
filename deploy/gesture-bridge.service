@@ -1,6 +1,6 @@
 [Unit]
 Description=Gesture Bridge broker
-Documentation=https://github.com/
+Documentation=https://github.com/Dyvenes/gesture-bridge
 After=network-online.target
 Wants=network-online.target
 
