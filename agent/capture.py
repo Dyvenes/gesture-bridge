@@ -24,10 +24,12 @@ import time
 from ctypes import wintypes
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
 
 import comtypes.client
 import uiautomation as auto
 
+from agent.browser_link import TabState, with_timecode
 from agent.winutil import UrlReader, Window, foreground, strip_browser_suffix
 
 log = logging.getLogger("bridge.capture")
@@ -372,8 +374,13 @@ class GrabWatcher:
     показать, а ставка на аукционе уходит мгновенно.
     """
 
-    def __init__(self, interval: float = 0.5) -> None:
+    def __init__(self, interval: float = 0.5,
+                 browser_state: "Callable[[], TabState | None] | None" = None) -> None:
         self.interval = interval
+        # Расширение браузера, если оно установлено. Без него всё работает
+        # по-прежнему, просто без таймкода и без правильного адреса на
+        # сайтах, которые меняют его через history.pushState.
+        self.browser_state = browser_state
         self._reader = UrlReader()
         self._lock = threading.Lock()
         self._current = EMPTY
@@ -396,6 +403,19 @@ class GrabWatcher:
     def snapshot(self, deep: bool = False) -> Grab:
         """Свежий захват прямо сейчас. deep=True разрешает Ctrl+C."""
         window = foreground()
+
+        # Расширение знает о странице больше, чем адресная строка, поэтому
+        # спрашиваем сначала его.
+        if window.is_browser and self.browser_state is not None:
+            state = self.browser_state()
+            if state is not None:
+                note = state.title or "вкладка браузера"
+                if state.seconds >= 5:
+                    note = f"{note} · {state.seconds // 60}:{state.seconds % 60:02d}"
+                return Grab(kind="url",
+                            url=with_timecode(state.url, state.seconds),
+                            note=note)
+
         url = self._reader.read(window)
         grab = (capture_deep if deep else capture_passive)(window, url)
         if grab.kind == "url":

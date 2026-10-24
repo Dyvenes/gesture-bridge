@@ -32,6 +32,7 @@ sys.path.insert(0, str(ROOT))
 import aiohttp                                                    # noqa: E402
 import uiautomation as auto                                       # noqa: E402
 
+from agent.browser_link import BrowserLink                        # noqa: E402
 from agent.capture import GrabWatcher, set_clipboard_text         # noqa: E402
 from agent.gestures import FIST, PALM, GestureEvent, GestureWatcher  # noqa: E402
 from agent.overlay import ACCENT, WARN, Card, Overlay             # noqa: E402
@@ -65,7 +66,8 @@ class Agent:
         self.deep = deep
 
         self.overlay = Overlay()
-        self.content = GrabWatcher()
+        self.browser = BrowserLink()
+        self.content = GrabWatcher(browser_state=lambda: self.browser.state)
         self.gestures = GestureWatcher(MODEL, self._on_gesture, camera)
 
         self.loop = asyncio.new_event_loop()
@@ -414,6 +416,10 @@ class Agent:
     async def _network(self) -> None:
         delay = 1.0
         timeout = aiohttp.ClientTimeout(total=None, sock_connect=15)
+        # Слушаем расширение браузера до того, как лезть к брокеру:
+        # оно может подключиться в любой момент и не должно ждать сети.
+        await self.browser.start()
+
         async with aiohttp.ClientSession(timeout=timeout) as session:
             self.session = session
             while True:

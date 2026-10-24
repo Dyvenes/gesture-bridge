@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Gesture Bridge",
+  "version": "1.0.0",
+  "description": "Отдаёт агенту настоящее состояние вкладки: адрес после переходов внутри страницы и позицию воспроизведения.",
+  "permissions": ["tabs"],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "icons": {
+    "128": "icon-128.png"
+  }
+}
